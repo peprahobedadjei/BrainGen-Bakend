@@ -1,5 +1,5 @@
 # Use a lightweight Python image as the base
-FROM python:3.9.17-bookworm
+FROM python:3.10.12-slim-bullseye
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=True
@@ -7,6 +7,12 @@ ENV APP_HOME=/back-end
 
 # Set the working directory
 WORKDIR $APP_HOME
+
+# Install system dependencies required for OpenCV
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy project files into the container
 COPY . .

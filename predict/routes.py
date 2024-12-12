@@ -49,12 +49,12 @@ def create_user_folder(user_id: str):
     Create a folder for the user in the `users_db` directory.
     """
     try:
-                # Initialize the storage client
+        # Initialize the storage client
         storage_client = storage.Client()
 
         # Specify the bucket name
         bucket_name = "the-challenge-433814.firebasestorage.app"
-        user_db_folder="users_db"
+        user_db_folder = "users_db"
         logger.info(f"Accessing bucket: {bucket_name}")
 
         # Specify the user's folder path
@@ -62,6 +62,14 @@ def create_user_folder(user_id: str):
 
         # Access the bucket
         bucket = storage_client.get_bucket(bucket_name)
+
+        # Check if the folder already exists
+        existing_blob = bucket.get_blob(user_folder_path)
+        if existing_blob:
+            return {
+                "status": "error",
+                "message": f"Folder with user ID '{user_id}' already exists.",
+            }
 
         # Create an empty blob to represent the folder
         blob = bucket.blob(user_folder_path)
@@ -71,6 +79,7 @@ def create_user_folder(user_id: str):
     except Exception as e:
         logger.error(f"Error creating user folder: {e}")
         raise HTTPException(status_code=500, detail=f"Error creating user folder: {e}")
+
     
 
 
@@ -92,6 +101,15 @@ async def upload_to_drive(
         # Access Google Cloud Storage
         storage_client = storage.Client()
         bucket = storage_client.get_bucket(BUCKET_NAME)
+
+        # Check if the user's folder exists
+        user_folder_path = f"{USERS_DB_FOLDER}/{user_id}/"
+        blobs = list(bucket.list_blobs(prefix=user_folder_path))
+        if not blobs:
+            return JSONResponse(
+                {"error": f"No folder has been created for user '{user_id}'."},
+                status_code=400,
+            )
 
         uploaded_files = []
 
@@ -122,13 +140,14 @@ async def upload_to_drive(
             {"success": False, "error": f"File upload failed: {e}"},
             status_code=500,
         )
-    
+
 
 
 @predict_bp.get("/models", tags=["Models"])
-def list_bucket_items():
+def list_predict_models():
     """
-    List all items in the bucket 'the-challenge-433814.firebasestorage.app'.
+    List all items in the 'predict_models/' folder in the bucket
+    'the-challenge-433814.firebasestorage.app'.
     """
     try:
         # Initialize the storage client
@@ -141,20 +160,22 @@ def list_bucket_items():
         # Get the bucket
         bucket = storage_client.get_bucket(bucket_name)
 
-        # List all blobs (items) in the bucket
-        blobs = bucket.list_blobs()
+        # List all blobs with the prefix 'predict_models/'
+        prefix = "predict_models/"
+        blobs = bucket.list_blobs(prefix=prefix)
         blob_names = [blob.name for blob in blobs]
 
         if not blob_names:
-            logger.info(f"No items found in bucket '{bucket_name}'.")
-            return {"status": "success", "bucket": bucket_name, "items": [], "message": "The bucket is empty."}
+            logger.info(f"No items found in folder '{prefix}' in bucket '{bucket_name}'.")
+            return {"status": "success", "bucket": bucket_name, "items": [], "message": "The folder is empty."}
 
-        logger.info(f"Found {len(blob_names)} items in bucket '{bucket_name}'.")
+        logger.info(f"Found {len(blob_names)} items in folder '{prefix}' in bucket '{bucket_name}'.")
         return {"status": "success", "bucket": bucket_name, "items": blob_names}
 
     except Exception as e:
-        logger.error(f"Error occurred while listing items in the bucket: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error listing bucket items: {str(e)}")
+        logger.error(f"Error occurred while listing items in the folder: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error listing folder items: {str(e)}")
+
 
 
 @predict_bp.post("/models/load", tags=["Models"])
@@ -285,4 +306,113 @@ async def apply_gradcam(user_id: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error generating Grad-CAM: {str(e)}")
+
+
+
+@predict_bp.post("/models/clear-memory", tags=["Models"])
+def clear_memory():
+    """
+    Clear the loaded model from memory.
+    """
+    global loaded_model
+    try:
+        if loaded_model is not None:
+            # Reset the loaded model
+            loaded_model = None
+            logger.info("Loaded model cleared from memory.")
+            return {"status": "success", "message": "Loaded model has been cleared from memory."}
+        else:
+            return {"status": "info", "message": "No model is currently loaded in memory."}
+    except Exception as e:
+        logger.error(f"Error occurred while clearing memory: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error clearing memory: {str(e)}")
+
+@predict_bp.get("/{user_id}/list-folders", tags=["Users"])
+def list_user_folders(user_id: str):
+    """
+    List all folders in the `users_db` directory that match the user's `user_id`.
+    """
+    try:
+        # Initialize the storage client
+        storage_client = storage.Client()
+
+        # Specify the bucket name and user_db_folder
+        bucket_name = "the-challenge-433814.firebasestorage.app"
+        user_db_folder = "users_db"
+        user_folder_path = f"{user_db_folder}/{user_id}/"
+
+        logger.info(f"Accessing bucket: {bucket_name} and folder: {user_folder_path}")
+
+        # Access the bucket
+        bucket = storage_client.get_bucket(bucket_name)
+
+        # List all blobs with the prefix `users_db/{user_id}/`
+        blobs = bucket.list_blobs(prefix=user_folder_path)
+
+        # Extract folder names by filtering for paths ending with "/"
+        folders = {blob.name for blob in blobs if blob.name.endswith("/")}
+
+        if not folders:
+            return {
+                "status": "success",
+                "message": f"No folders found for user '{user_id}' in 'users_db'.",
+                "folders": [],
+            }
+
+        logger.info(f"Found {len(folders)} folders for user '{user_id}' in 'users_db'.")
+        return {
+            "status": "success",
+            "message": f"Folders listed successfully for user '{user_id}'.",
+            "folders": list(folders),
+        }
+    except Exception as e:
+        logger.error(f"Error listing folders for user '{user_id}': {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing folders: {e}")
+
+
+@predict_bp.get("/{user_id}/list-files", tags=["Users"])
+def list_user_files(user_id: str):
+    """
+    List all files in the user's folder in the `users_db` directory, excluding subfolders.
+    """
+    try:
+        # Initialize the storage client
+        storage_client = storage.Client()
+
+        # Specify the bucket name and user folder path
+        bucket_name = "the-challenge-433814.firebasestorage.app"
+        user_db_folder = "users_db"
+        user_folder_path = f"{user_db_folder}/{user_id}/"
+
+        logger.info(f"Accessing bucket: {bucket_name} and folder: {user_folder_path}")
+
+        # Access the bucket
+        bucket = storage_client.get_bucket(bucket_name)
+
+        # List all blobs in the user's folder
+        blobs = bucket.list_blobs(prefix=user_folder_path)
+
+        # Include only files directly in the user's folder (no subfolder files)
+        files = [
+            blob.name.split("/")[-1]
+            for blob in blobs
+            if not blob.name.endswith("/") and blob.name.count("/") == user_folder_path.count("/")
+        ]
+
+        if not files:
+            return {
+                "status": "success",
+                "message": f"No files found in folder for user '{user_id}'.",
+                "files": [],
+            }
+
+        logger.info(f"Found {len(files)} files in folder '{user_folder_path}' for user '{user_id}'.")
+        return {
+            "status": "success",
+            "message": f"Files listed successfully for user '{user_id}'.",
+            "files": files,
+        }
+    except Exception as e:
+        logger.error(f"Error listing files for user '{user_id}': {e}")
+        raise HTTPException(status_code=500, detail=f"Error listing files: {e}")
 
